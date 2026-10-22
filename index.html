@@ -53,8 +53,73 @@
      conflito. Os 50px de padding continuam sendo a área segura das
      bordas.
      ========================================================== -->
-<link href="assets/vendor/inter.css" rel="stylesheet">
-<script src="assets/vendor/d3.v7.min.js"></script>
+<!-- Runtime SVG incorporado: mantém o deck em um único HTML, inclusive offline. -->
+<script>
+(function (global) {
+    'use strict';
+    var NS = 'http://www.w3.org/2000/svg';
+
+    function Selection(nodes) { this.nodes = nodes || []; }
+    Selection.prototype.empty = function () { return this.nodes.length === 0; };
+    Selection.prototype.node = function () { return this.nodes[0] || null; };
+    Selection.prototype.append = function (tag) {
+        var added = [];
+        this.nodes.forEach(function (parent) {
+            var child = document.createElementNS(NS, tag);
+            parent.appendChild(child);
+            added.push(child);
+        });
+        return new Selection(added);
+    };
+    Selection.prototype.attr = function (name, value) {
+        this.nodes.forEach(function (node, index) {
+            var next = typeof value === 'function' ? value.call(node, node.__data__, index) : value;
+            if (next === null || typeof next === 'undefined') node.removeAttribute(name);
+            else node.setAttribute(name, String(next));
+        });
+        return this;
+    };
+    Selection.prototype.text = function (value) {
+        this.nodes.forEach(function (node, index) {
+            node.textContent = typeof value === 'function' ? value.call(node, node.__data__, index) : value;
+        });
+        return this;
+    };
+    Selection.prototype.selectAll = function (selector) {
+        var found = [];
+        this.nodes.forEach(function (node) {
+            found = found.concat(Array.prototype.slice.call(node.querySelectorAll(selector)));
+        });
+        return new Selection(found);
+    };
+    Selection.prototype.remove = function () {
+        this.nodes.forEach(function (node) {
+            if (node.parentNode) node.parentNode.removeChild(node);
+        });
+        return this;
+    };
+
+    function timer(callback) {
+        var start = (global.performance && performance.now) ? performance.now() : Date.now();
+        var active = true;
+        function frame(now) {
+            if (!active) return;
+            callback(now - start);
+            global.requestAnimationFrame(frame);
+        }
+        global.requestAnimationFrame(frame);
+        return { stop: function () { active = false; } };
+    }
+
+    global.d3 = {
+        select: function (selector) {
+            var node = typeof selector === 'string' ? document.querySelector(selector) : selector;
+            return new Selection(node ? [node] : []);
+        },
+        timer: timer
+    };
+})(window);
+</script>
 <style>
 /* @MIRA:THEME:START */
 /* MIRA THEME: mira-dark (padrão)
@@ -321,6 +386,46 @@ p  { font-size: clamp(15px, 2vh, 20px); line-height: 1.5; color: var(--muted); }
     body > section:last-of-type .slide-centro > div p {
         font-size: 10px !important;
         line-height: 1.35 !important;
+    }
+}
+
+/* Navegadores moveis nem sempre reportam a orientacao de forma confiavel
+   quando o HTML abre dentro de um visualizador. O ponteiro coarse garante
+   que o fechamento caiba mesmo nesses casos. */
+@media (pointer: coarse) {
+    body > section:last-of-type .slide-centro {
+        justify-content: flex-start !important;
+        padding: 14px 16px 28px !important;
+        gap: 7px !important;
+    }
+    body > section:last-of-type .marca { font-size: 8px !important; }
+    body > section:last-of-type h2 {
+        font-size: clamp(20px, 5.4vh, 28px) !important;
+        line-height: 1.02 !important;
+        margin-bottom: 0 !important;
+    }
+    body > section:last-of-type .slide-centro > div {
+        gap: 8px !important;
+        min-height: 0;
+    }
+    body > section:last-of-type .slide-centro > div > div {
+        min-height: 0;
+        padding: 9px 10px !important;
+        border-radius: 9px !important;
+    }
+    body > section:last-of-type .slide-centro > div span {
+        font-size: 8px !important;
+        line-height: 1.15 !important;
+        margin-bottom: 4px !important;
+    }
+    body > section:last-of-type h3 {
+        font-size: 11px !important;
+        line-height: 1.12 !important;
+        margin-bottom: 5px !important;
+    }
+    body > section:last-of-type .slide-centro > div p {
+        font-size: 8.5px !important;
+        line-height: 1.24 !important;
     }
 }
 
