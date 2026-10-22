@@ -1,0 +1,1523 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Mira-Default</title>
+
+<!-- ==========================================================
+     MIRA-DEFAULT · template oficial padrão do Mira
+     ----------------------------------------------------------
+     Um slide = um título em cima e uma animação ocupando todo o
+     resto do quadro 16:9. Sem card, sem pílulas, sem moldura: a
+     animação É o slide.
+
+     Veio do mira-studio-full, mas SÓ a parte de animação. Ficaram
+     de fora, de propósito, as coisas que existem para gravar:
+       - regra dos terços (animação 2/3 + câmera 1/3)
+       - layout de câmera cheia
+       - teleprompter e gravador
+     Slide comum não tem câmera. Quem precisa gravar usa
+     /mira-studio-full (16:9) ou /mira-studio (9:16), que seguem
+     existindo com essas peças.
+
+     ESTRUTURA DE UM SLIDE DE CONTEÚDO (é o contrato; os agentes
+     de animação procuram .anim-stage):
+
+       <section>
+         <div class="slide-main">
+           <h2>Título <span class="accent">destacado</span></h2>
+           <div class="anim-stage"><svg id="..."></svg></div>
+         </div>
+       </section>
+
+     O PALCO OCUPA O QUADRO INTEIRO, de borda a borda: o .anim-stage
+     é absoluto e cobre a <section> toda, por baixo do título. Não é
+     mais "o que sobra depois do título".
+
+     O TÍTULO FICA POR CIMA de tudo que é do template. A faixa de
+     z-index deste arquivo vai até 10; os módulos de autoria
+     (mira-draw, mira-edit) usam 99998 e acima, e continuam acima do
+     título de propósito, senão não daria para desenhar nem editar
+     por cima dele.
+
+     A ANIMAÇÃO EVITA A FAIXA DO TÍTULO. O palco() mede o título e
+     entrega a faixa livre em unidades do viewBox:
+
+       F.topo         y onde a área livre começa (abaixo do título)
+       F.alturaUtil   altura dessa área
+       F.vy(k)        mapeia 0..1 na faixa livre. Use no lugar de F.H * k
+
+     Regra: nada FOCAL acima de F.topo. Ambiente pode atravessar,
+     porque atrás do título ele lê como profundidade, não como
+     conflito. Os 50px de padding continuam sendo a área segura das
+     bordas.
+     ========================================================== -->
+<link href="assets/vendor/inter.css" rel="stylesheet">
+<script src="assets/vendor/d3.v7.min.js"></script>
+<style>
+/* @MIRA:THEME:START */
+/* MIRA THEME: mira-dark (padrão)
+   Identidade clássica do canal: fundo preto, laranja vibrante,
+   glassmorphism no estilo clássico do canal. */
+:root {
+    --mira-primary: #FF904D;
+    --mira-crop: #35D07F;
+    --mira-bg: #000000;
+    --mira-text: #ffffff;
+    --mira-text-soft: rgba(255, 255, 255, 0.70);
+    --mira-text-softer: rgba(255, 255, 255, 0.50);
+    --mira-card-bg: rgba(255, 255, 255, 0.05);
+    --mira-card-border: rgba(255, 255, 255, 0.10);
+    --mira-glow-soft: rgba(255, 144, 77, 0.15);
+    --mira-glow-strong: rgba(255, 144, 77, 0.25);
+    --mira-icon-bg: rgba(255, 144, 77, 0.15);
+    --mira-icon-border: rgba(255, 144, 77, 0.30);
+    --mira-pill-bg: rgba(255, 255, 255, 0.04);
+    --mira-pill-border: rgba(255, 255, 255, 0.08);
+    --mira-stage-glow: rgba(255, 144, 77, 0.06);
+    --mira-accent-2: #FFC766;
+}
+/* @MIRA:THEME:END */
+
+/* ----------------------------------------------------------
+   A estrutura vem DEPOIS do bloco do tema de propósito: o
+   "npx mira-animator new --theme=..." troca só aquele bloco, e
+   o que está aqui embaixo precisa continuar valendo por cima do
+   que o tema trouxer.
+   ---------------------------------------------------------- */
+:root {
+    --accent: var(--mira-primary);
+    --bg: var(--mira-bg);
+    --ink: var(--mira-text);
+    --muted: var(--mira-text-soft);
+    --line: var(--mira-card-border);
+    /* quadro 16:9 que cabe inteiro na janela */
+    --fmt-w: min(100vw, calc(100vh * 16 / 9));
+    --fmt-h: calc(var(--fmt-w) * 9 / 16);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html { background: #000000; scroll-behavior: smooth; scroll-snap-type: y proximity; }
+/* sem barra de rolagem: ela roubaria largura do quadro e criaria
+   scroll horizontal em tela cheia. Navegue por seta ou roda. */
+html { scrollbar-width: none; overflow-x: hidden; }
+html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; }
+
+body {
+    background: #000000;
+    color: var(--ink);
+    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+body > section {
+    position: relative;
+    width: var(--fmt-w);
+    height: var(--fmt-h);
+    min-height: var(--fmt-h);
+    /* centraliza o quadro: em tela que não é 16:9 a sobra vira
+       faixa cinza acima e abaixo, nunca o slide seguinte */
+    margin: calc((100vh - var(--fmt-h)) / 2) 0;
+    scroll-margin-top: calc((100vh - var(--fmt-h)) / 2);
+    overflow: hidden;
+    background: var(--bg);
+    scroll-snap-align: start;
+    display: flex;
+    flex-direction: column;
+    isolation: isolate;
+}
+
+/* DIRETIVA DA CAPA: o título do primeiro slide nunca quebra
+   deixando artigo ou preposição sozinho na linha de baixo. */
+body > section:first-of-type h1,
+body > section:first-of-type h2 { text-wrap: balance; }
+
+h1 { font-size: clamp(34px, 7.4vh, 72px); line-height: 1.02; letter-spacing: -.02em; font-weight: 800; }
+h2 { font-size: clamp(28px, 4.6vh, 46px); line-height: 1.1; letter-spacing: -.01em; font-weight: 800; }
+p  { font-size: clamp(15px, 2vh, 20px); line-height: 1.5; color: var(--muted); }
+.accent { color: var(--accent); }
+
+/* ---------- capa e encerramento: texto centrado no quadro ---------- */
+.slide-centro {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    padding: 50px;
+    text-align: center;
+}
+.slide-centro .marca {
+    font-size: 12px; letter-spacing: .22em; text-transform: uppercase;
+    color: var(--mira-text-softer);
+}
+
+/* ---------- slide de conteúdo: título em cima, animação no resto ---------- */
+.slide-main {
+    width: 100%;
+    height: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 50px;              /* área segura */
+}
+/* o título fica POR CIMA do palco, que agora passa por baixo dele.
+   z-index 10 é o teto deste template; mira-draw e mira-edit vivem em
+   99998 e acima, e continuam por cima do título de propósito, senão
+   não daria para desenhar nem editar sobre ele. */
+.slide-main h2 {
+    flex: 0 0 auto;
+    margin-bottom: 14px;
+    text-align: center;
+    position: relative;
+    z-index: 10;
+}
+
+/* o palco: O QUADRO INTEIRO, de borda a borda. */
+.anim-stage {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    width: auto;
+    height: auto;
+    min-height: 0;
+    background: none;
+    border-radius: 0;
+}
+.anim-stage svg { width: 100%; height: 100%; display: block; }
+
+/* ============================================================
+   CONTROLES DE NAVEGAÇÃO FLUTUANTE ULTRA-FINOS (MIRA)
+   Discreto, bem fino e rente à borda inferior
+   ============================================================ */
+#mira-nav {
+    position: fixed;
+    bottom: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 5000;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 10px;
+    height: 22px;
+    background: rgba(10, 10, 14, 0.70);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 9999px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.50);
+    pointer-events: auto;
+    transition: all 0.2s ease;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.nav-arrow {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 144, 77, 0.40);
+    background: rgba(255, 144, 77, 0.12);
+    color: var(--mira-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    outline: none;
+    padding: 0;
+}
+
+.nav-arrow svg {
+    width: 10px;
+    height: 10px;
+}
+
+.nav-arrow:hover {
+    background: var(--mira-primary);
+    color: #000000;
+    transform: scale(1.18);
+    box-shadow: 0 0 8px var(--mira-glow-strong);
+}
+
+.nav-arrow:active {
+    transform: scale(0.9);
+}
+
+.nav-arrow.disabled,
+.nav-arrow:disabled {
+    opacity: 0.15;
+    cursor: default;
+    pointer-events: none;
+    box-shadow: none;
+    transform: none;
+}
+
+.nav-msg-box {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.nav-msg {
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--mira-text-soft);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    opacity: 0.85;
+}
+
+.nav-msg-desktop { display: inline; }
+.nav-msg-mobile { display: none; }
+
+@media (max-width: 640px), (pointer: coarse) {
+    #mira-nav {
+        bottom: max(4px, env(safe-area-inset-bottom));
+        padding: 1px 8px;
+        height: 20px;
+        gap: 6px;
+    }
+    .nav-arrow {
+        width: 15px;
+        height: 15px;
+    }
+    .nav-arrow svg {
+        width: 9px;
+        height: 9px;
+    }
+    .nav-msg {
+        font-size: 9px;
+    }
+    .nav-msg-desktop { display: none; }
+    .nav-msg-mobile { display: inline; }
+}
+</style>
+</head>
+<body>
+
+<!-- === SLIDE 1 · CAPA === -->
+<section>
+    <div class="slide-centro">
+        <span class="marca">SAS Educação · Coordenação Pedagógica</span>
+        <h1>Programa SAS e a <span class="accent">BNCC Computação</span></h1>
+        <p>Análise das abordagens transversais e a articulação estruturante com o componente CHC (6º ao 8º ano)</p>
+    </div>
+</section>
+
+<!-- === SLIDE 2 · DIAGNÓSTICO: COLEÇÕES SAS === -->
+<section>
+    <div class="slide-main">
+        <h2>Potencial investigativo das <span class="accent">Coleções SAS</span></h2>
+        <div class="anim-stage"><svg id="stage-potencial" preserveAspectRatio="xMidYMid meet"></svg></div>
+    </div>
+</section>
+
+<!-- === SLIDE 3 · SINERGIA DISCIPLINAR === -->
+<section>
+    <div class="slide-main">
+        <h2>Sinergia em <span class="accent">Português e Matemática</span></h2>
+        <div class="anim-stage"><svg id="stage-sinergia" preserveAspectRatio="xMidYMid meet"></svg></div>
+    </div>
+</section>
+
+<!-- === SLIDE 4 · AMBIENTES E PLATAFORMAS SAS === -->
+<section>
+    <div class="slide-main">
+        <h2>Ambientes e plataformas do <span class="accent">Ecossistema SAS</span></h2>
+        <div class="anim-stage"><svg id="stage-ambientes" preserveAspectRatio="xMidYMid meet"></svg></div>
+    </div>
+</section>
+
+<!-- === SLIDE 5 · TRÊS CAMADAS PEDAGÓGICAS === -->
+<section>
+    <div class="slide-main">
+        <h2>Três dimensões <span class="accent">distintas e complementares</span></h2>
+        <div class="anim-stage"><svg id="stage-camadas" preserveAspectRatio="xMidYMid meet"></svg></div>
+    </div>
+</section>
+
+<!-- === SLIDE 6 · CHC COMO ESPINHA DORSAL === -->
+<section>
+    <div class="slide-main">
+        <h2>O componente CHC como <span class="accent">espinha dorsal</span></h2>
+        <div class="anim-stage"><svg id="stage-chc" preserveAspectRatio="xMidYMid meet"></svg></div>
+    </div>
+</section>
+
+<!-- === SLIDE 7 · ENCAMINHAMENTOS EM 5 ETAPAS === -->
+<section>
+    <div class="slide-main">
+        <h2>Cinco etapas para o <span class="accent">alinhamento curricular</span></h2>
+        <div class="anim-stage"><svg id="stage-etapas" preserveAspectRatio="xMidYMid meet"></svg></div>
+    </div>
+</section>
+
+<!-- === SLIDE 8 · FECHAMENTO E MATRIZ DE ARTICULAÇÃO === -->
+<section style="position: relative;">
+    <div class="anim-stage" style="opacity: 0.35;"><svg id="stage-fechamento" preserveAspectRatio="xMidYMid meet"></svg></div>
+    <div class="slide-centro" style="position: relative; z-index: 10; max-width: 1060px; margin: 0 auto; padding: 36px 20px; gap: 18px;">
+        <span class="marca">Síntese Estratégica · Coordenação Pedagógica</span>
+        <h2 style="margin-bottom: 4px;">Do potencial ao <span class="accent">planejamento intencional</span></h2>
+        
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; text-align: left; width: 100%;">
+            <!-- Card 1: Diagnóstico e Transição -->
+            <div style="background: rgba(18, 18, 24, 0.92); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 14px; padding: 22px 18px; display: flex; flex-direction: column;">
+                <span style="font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--mira-accent-2); margin-bottom: 6px;">Diagnóstico & Transição</span>
+                <h3 style="font-size: 15px; font-weight: 800; color: #ffffff; margin-bottom: 10px; line-height: 1.25;">Da oportunidade à intencionalidade</h3>
+                <p style="font-size: 12px; line-height: 1.55; color: rgba(255, 255, 255, 0.82); margin: 0;">O material SAS apresenta uma base muito rica para o desenvolvimento transversal da Computação. Entretanto, precisamos passar de uma identificação de oportunidades para um planejamento intencional das aprendizagens.</p>
+            </div>
+
+            <!-- Card 2: Papel do CHC -->
+            <div style="background: rgba(18, 18, 24, 0.92); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 14px; padding: 22px 18px; display: flex; flex-direction: column;">
+                <span style="font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--mira-primary); margin-bottom: 6px;">O Papel do CHC</span>
+                <h3 style="font-size: 15px; font-weight: 800; color: #ffffff; margin-bottom: 10px; line-height: 1.25;">Garantia de progressão</h3>
+                <p style="font-size: 12px; line-height: 1.55; color: rgba(255, 255, 255, 0.82); margin: 0;">O CHC pode contribuir justamente nesse processo, assegurando a progressão das habilidades específicas da BNCC Computação e articulando-as às experiências propostas nos demais componentes curriculares.</p>
+            </div>
+
+            <!-- Card 3: Próximo Passo Recomendado -->
+            <div style="background: rgba(255, 144, 77, 0.08); border: 1.5px solid var(--mira-primary); box-shadow: 0 0 24px rgba(255, 144, 77, 0.16); border-radius: 14px; padding: 22px 18px; display: flex; flex-direction: column;">
+                <span style="font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--mira-primary); margin-bottom: 6px;">Próximo Passo Recomendado</span>
+                <h3 style="font-size: 15px; font-weight: 800; color: #ffffff; margin-bottom: 10px; line-height: 1.25;">Matriz de articulação por ano</h3>
+                <p style="font-size: 12px; line-height: 1.55; color: rgba(255, 255, 255, 0.92); margin: 0;">Como próximo passo, recomendo construir uma matriz de articulação entre SAS, BNCC Computação e CHC, indicando, para cada ano, o que já está previsto no material, o que pode ser desenvolvido transversalmente e o que precisará ser contemplado especificamente pelo CHC.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- === CONTROLES FLUTUANTES DE NAVEGAÇÃO === -->
+<nav id="mira-nav" aria-label="Navegação da apresentação">
+    <button id="nav-btn-prev" class="nav-arrow" aria-label="Slide anterior" title="Slide anterior (←)">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="19" y1="12" x2="5" y2="12"></line>
+            <polyline points="12 19 5 12 12 5"></polyline>
+        </svg>
+    </button>
+    <div class="nav-msg-box">
+        <span class="nav-msg nav-msg-desktop">(use as teclas do teclado para mudar o slide)</span>
+        <span class="nav-msg nav-msg-mobile">(toque na tela para mudar o slide)</span>
+    </div>
+    <button id="nav-btn-next" class="nav-arrow" aria-label="Próximo slide" title="Próximo slide (→)">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+        </svg>
+    </button>
+</nav>
+
+<script>
+/* ==============================================================
+   ANIMAÇÕES D3.JS · MIRA DEFAULT
+   Seguem a Regra Zero: coreografia de entrada e loop contínuo.
+   Cores vinculadas às CSS variables do tema mira-dark.
+   ============================================================== */
+(function () {
+    'use strict';
+
+    function cor(nome, reserva) {
+        var v = getComputedStyle(document.documentElement).getPropertyValue(nome).trim();
+        return v || reserva;
+    }
+
+    var COR = {
+        marca: cor('--mira-primary', '#FF904D'),
+        acento: cor('--mira-accent-2', '#FFC766'),
+        tinta: cor('--mira-text', '#ffffff'),
+        fundo: cor('--mira-bg', '#000000'),
+        suave: cor('--mira-text-soft', 'rgba(255, 255, 255, 0.70)'),
+        maisSuave: cor('--mira-text-softer', 'rgba(255, 255, 255, 0.45)'),
+        glow: cor('--mira-glow-soft', 'rgba(255, 144, 77, 0.18)'),
+        glowForte: cor('--mira-glow-strong', 'rgba(255, 144, 77, 0.35)'),
+        borda: cor('--mira-card-border', 'rgba(255, 255, 255, 0.12)'),
+        cardBg: cor('--mira-card-bg', 'rgba(255, 255, 255, 0.05)')
+    };
+
+    function reger(svgId, quadro) {
+        var svg = document.getElementById(svgId);
+        var slide = svg && svg.closest('section');
+        if (!slide || typeof IntersectionObserver !== 'function') {
+            d3.timer(function (ms) { quadro(ms); });
+            return;
+        }
+        var relogio = null, visivel = false;
+        d3.timer(function (ms) {
+            if (!visivel) { quadro(0); return; }
+            if (relogio === null) relogio = ms;
+            quadro(ms - relogio);
+        });
+        new IntersectionObserver(function (entradas) {
+            entradas.forEach(function (e) {
+                if (e.isIntersecting === visivel) return;
+                visivel = e.isIntersecting;
+                relogio = null;
+            });
+        }, { threshold: 0.6 }).observe(slide);
+    }
+
+    function palco(svgId) {
+        var svg = d3.select('#' + svgId);
+        if (svg.empty()) return null;
+        var caixa = svg.node().closest('.anim-stage');
+        var secao = caixa && caixa.closest ? caixa.closest('section') : null;
+        var titulo = secao && secao.querySelector
+            ? secao.querySelector('.slide-main h2, .slide-main h1')
+            : null;
+        var RESPIRO = 18;
+        var F = { W: 960, H: 460, topo: 0, alturaUtil: 460 };
+        F.vy = function (k) { return F.topo + F.alturaUtil * k; };
+
+        function casar() {
+            var r = caixa.getBoundingClientRect();
+            if (r.width > 0 && r.height > 0) F.H = Math.round(F.W * r.height / r.width);
+            svg.attr('viewBox', '0 0 ' + F.W + ' ' + F.H);
+
+            F.topo = 0;
+            if (titulo && titulo.getBoundingClientRect && r.height > 0) {
+                var t = titulo.getBoundingClientRect();
+                var basePx = Math.max(0, (t.bottom || 0) - (r.top || 0));
+                F.topo = Math.round(F.H * basePx / r.height) + RESPIRO;
+                F.topo = Math.min(F.topo, Math.round(F.H * 0.40));
+            }
+            F.alturaUtil = F.H - F.topo;
+            if (caixa.style && caixa.style.setProperty) {
+                caixa.style.setProperty('--mira-titulo-h', F.topo + 'px');
+            }
+        }
+        casar();
+        window.addEventListener('resize', casar);
+        svg.selectAll('*').remove();
+        return { svg: svg, F: F };
+    }
+
+    /* -------------------------------------------------------------
+       SLIDE 2: POTENCIAL INVESTIGATIVO DAS COLEÇÕES SAS
+       ------------------------------------------------------------- */
+    function animPotencialSAS(svgId) {
+        var p = palco(svgId); if (!p) return;
+        var svg = p.svg, F = p.F;
+        var cx = F.W / 2, cy = F.vy(0.52);
+
+        var defs = svg.append('defs');
+        var filter = defs.append('filter').attr('id', svgId + '-glow');
+        filter.append('feGaussianBlur').attr('stdDeviation', 6).attr('result', 'coloredBlur');
+        var merge = filter.append('feMerge');
+        merge.append('feMergeNode').attr('in', 'coloredBlur');
+        merge.append('feMergeNode').attr('in', 'SourceGraphic');
+
+        var raiz = svg.append('g');
+
+        var raios = [115, 185, 255];
+        raios.forEach(function (r, idx) {
+            raiz.append('circle')
+                .attr('cx', cx).attr('cy', cy).attr('r', r)
+                .attr('fill', 'none')
+                .attr('stroke', COR.borda)
+                .attr('stroke-width', 1.5)
+                .attr('stroke-dasharray', idx === 1 ? '4,4' : '2,6')
+                .attr('opacity', 0.5);
+        });
+
+        var ripple = raiz.append('circle')
+            .attr('cx', cx).attr('cy', cy).attr('r', 72)
+            .attr('fill', 'none')
+            .attr('stroke', COR.marca)
+            .attr('stroke-width', 2)
+            .attr('opacity', 0);
+
+        var satelitesInfo = [
+            { titulo: 'Investigação Científica', subtitulo: 'Curiosidade e busca ativa', anguloBase: 0 },
+            { titulo: 'Criatividade Digital', subtitulo: 'Produção e expressão', anguloBase: Math.PI * 0.5 },
+            { titulo: 'Resolução de Problemas', subtitulo: 'Lógica e estratégia', anguloBase: Math.PI },
+            { titulo: 'Projetos Interdisciplinares', subtitulo: 'Integração de áreas', anguloBase: Math.PI * 1.5 }
+        ];
+
+        var linhasGrupo = raiz.append('g');
+        var satelitesGrupo = raiz.append('g');
+
+        var satelitesEls = satelitesInfo.map(function (item) {
+            var g = satelitesGrupo.append('g');
+            var bg = g.append('rect')
+                .attr('width', 180).attr('height', 52)
+                .attr('x', -90).attr('y', -26)
+                .attr('rx', 12)
+                .attr('fill', 'rgba(18, 18, 24, 0.88)')
+                .attr('stroke', COR.borda)
+                .attr('stroke-width', 1.5);
+            g.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('y', -4)
+                .attr('fill', COR.acento)
+                .attr('font-size', '13px')
+                .attr('font-weight', '700')
+                .text(item.titulo);
+            g.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('y', 14)
+                .attr('fill', COR.suave)
+                .attr('font-size', '11px')
+                .text(item.subtitulo);
+            g.append('circle')
+                .attr('r', 5)
+                .attr('cx', 0).attr('cy', -26)
+                .attr('fill', COR.marca);
+            return { g: g, bg: bg, item: item };
+        });
+
+        var linhasEls = satelitesInfo.map(function () {
+            return linhasGrupo.append('line')
+                .attr('x1', cx).attr('y1', cy)
+                .attr('stroke', COR.borda)
+                .attr('stroke-width', 1.5)
+                .attr('stroke-dasharray', '3,3');
+        });
+
+        var particulasGrupo = raiz.append('g');
+        var particulas = [];
+        for (var i = 0; i < 16; i++) {
+            particulas.push({
+                el: particulasGrupo.append('circle').attr('r', 3).attr('fill', i % 2 === 0 ? COR.marca : COR.acento),
+                sateliteIdx: i % 4,
+                progresso: (i * 0.25) % 1
+            });
+        }
+
+        var nucleo = raiz.append('g');
+        nucleo.append('circle')
+            .attr('cx', cx).attr('cy', cy).attr('r', 78)
+            .attr('fill', 'rgba(255, 144, 77, 0.12)')
+            .attr('filter', 'url(#' + svgId + '-glow)');
+        nucleo.append('circle')
+            .attr('cx', cx).attr('cy', cy).attr('r', 72)
+            .attr('fill', 'rgba(20, 20, 26, 0.95)')
+            .attr('stroke', COR.marca)
+            .attr('stroke-width', 2.5);
+        nucleo.append('circle')
+            .attr('cx', cx).attr('cy', cy).attr('r', 65)
+            .attr('fill', 'none')
+            .attr('stroke', 'rgba(255, 255, 255, 0.08)')
+            .attr('stroke-width', 1.5)
+            .attr('stroke-dasharray', '3,3');
+        nucleo.append('text')
+            .attr('x', cx).attr('y', cy - 8)
+            .attr('text-anchor', 'middle')
+            .attr('fill', COR.tinta)
+            .attr('font-size', '15px')
+            .attr('font-weight', '800')
+            .text('SAS Educação');
+        nucleo.append('text')
+            .attr('x', cx).attr('y', cy + 14)
+            .attr('text-anchor', 'middle')
+            .attr('fill', COR.acento)
+            .attr('font-size', '11px')
+            .attr('font-weight', '700')
+            .attr('letter-spacing', '0.08em')
+            .text('6º AO 8º ANO');
+
+        var CICLO = 16000;
+        reger(svgId, function (ms) {
+            var t = (ms % CICLO) / CICLO;
+            var anguloGiro = t * Math.PI * 2 * 0.35;
+
+            var rippleT = (ms % 3500) / 3500;
+            ripple.attr('r', 72 + rippleT * 180)
+                .attr('opacity', Math.max(0, (1 - rippleT) * 0.65));
+
+            var rOrbita = 205;
+            satelitesEls.forEach(function (sat, idx) {
+                var a = sat.item.anguloBase + anguloGiro;
+                var sx = cx + Math.cos(a) * (rOrbita + 20 * Math.sin(a * 2));
+                var sy = cy + Math.sin(a) * (rOrbita * 0.82);
+
+                sat.g.attr('transform', 'translate(' + sx + ',' + sy + ')');
+                linhasEls[idx].attr('x2', sx).attr('y2', sy);
+
+                var satPulse = Math.sin(ms * 0.003 + idx * 1.5) * 0.5 + 0.5;
+                sat.bg.attr('stroke', satPulse > 0.6 ? COR.marca : COR.borda)
+                    .attr('stroke-width', satPulse > 0.6 ? 2 : 1.2);
+            });
+
+            particulas.forEach(function (pt, idx) {
+                var prog = ((ms * 0.0003) + idx * 0.0625) % 1;
+                var sat = satelitesEls[pt.sateliteIdx];
+                var a = sat.item.anguloBase + anguloGiro;
+                var sx = cx + Math.cos(a) * (rOrbita + 20 * Math.sin(a * 2));
+                var sy = cy + Math.sin(a) * (rOrbita * 0.85);
+
+                var px = cx + (sx - cx) * prog;
+                var py = cy + (sy - cy) * prog;
+                pt.el.attr('cx', px).attr('cy', py)
+                    .attr('opacity', Math.sin(prog * Math.PI) * 0.85);
+            });
+        });
+    }
+
+    /* -------------------------------------------------------------
+       SLIDE 3: SINERGIA EM PORTUGUÊS E MATEMÁTICA
+       ------------------------------------------------------------- */
+    function animSinergia(svgId) {
+        var p = palco(svgId); if (!p) return;
+        var svg = p.svg, F = p.F;
+        var xEsq = F.W * 0.17, xDir = F.W * 0.83;
+        var yPolo = F.vy(0.50);
+        var xCen = F.W * 0.50, yCen = F.vy(0.50);
+
+        var defs = svg.append('defs');
+        var grad = defs.append('linearGradient').attr('id', svgId + '-ponte');
+        grad.append('stop').attr('offset', '0%').attr('stop-color', COR.marca).attr('stop-opacity', 0.8);
+        grad.append('stop').attr('offset', '50%').attr('stop-color', COR.acento).attr('stop-opacity', 0.9);
+        grad.append('stop').attr('offset', '100%').attr('stop-color', COR.marca).attr('stop-opacity', 0.8);
+
+        var raiz = svg.append('g');
+
+        var pathEsq = raiz.append('path').attr('fill', 'none')
+            .attr('stroke', 'url(#' + svgId + '-ponte)')
+            .attr('stroke-width', 2.5).attr('stroke-dasharray', '6,4');
+        var pathDir = raiz.append('path').attr('fill', 'none')
+            .attr('stroke', 'url(#' + svgId + '-ponte)')
+            .attr('stroke-width', 2.5).attr('stroke-dasharray', '6,4');
+
+        // Polo Esquerdo: Língua Portuguesa
+        var poloE = raiz.append('g').attr('transform', 'translate(' + xEsq + ',' + yPolo + ')');
+        poloE.append('circle').attr('r', 85).attr('fill', 'rgba(255, 144, 77, 0.08)');
+        poloE.append('circle').attr('r', 78).attr('fill', 'rgba(16, 16, 22, 0.95)')
+            .attr('stroke', COR.marca).attr('stroke-width', 2.5);
+        poloE.append('circle').attr('r', 71).attr('fill', 'none')
+            .attr('stroke', 'rgba(255, 255, 255, 0.08)').attr('stroke-width', 1.5).attr('stroke-dasharray', '3,3');
+        poloE.append('text').attr('y', -14).attr('text-anchor', 'middle')
+            .attr('fill', COR.tinta).attr('font-size', '14px').attr('font-weight', '800')
+            .text('Língua Portuguesa');
+        poloE.append('text').attr('y', 8).attr('text-anchor', 'middle')
+            .attr('fill', COR.acento).attr('font-size', '12px').attr('font-weight', '700')
+            .text('Seção Click');
+        poloE.append('text').attr('y', 26).attr('text-anchor', 'middle')
+            .attr('fill', COR.suave).attr('font-size', '10px').attr('font-weight', '600')
+            .text('Cultura & Mundo Digital');
+
+        var tagsEsq = [
+            { txt: 'Mídias Críticas', dy: -108 },
+            { txt: 'Ética Digital', dy: 108 }
+        ];
+        tagsEsq.forEach(function (tag) {
+            var g = poloE.append('g').attr('transform', 'translate(0,' + tag.dy + ')');
+            g.append('rect').attr('x', -55).attr('y', -12).attr('width', 110).attr('height', 24).attr('rx', 12)
+                .attr('fill', 'rgba(255, 255, 255, 0.06)').attr('stroke', COR.borda);
+            g.append('text').attr('text-anchor', 'middle').attr('y', 4)
+                .attr('fill', COR.suave).attr('font-size', '10px').text(tag.txt);
+        });
+
+        // Polo Direito: Matemática
+        var poloD = raiz.append('g').attr('transform', 'translate(' + xDir + ',' + yPolo + ')');
+        poloD.append('circle').attr('r', 85).attr('fill', 'rgba(255, 199, 102, 0.08)');
+        poloD.append('circle').attr('r', 78).attr('fill', 'rgba(16, 16, 22, 0.95)')
+            .attr('stroke', COR.acento).attr('stroke-width', 2.5);
+        poloD.append('circle').attr('r', 71).attr('fill', 'none')
+            .attr('stroke', 'rgba(255, 255, 255, 0.08)').attr('stroke-width', 1.5).attr('stroke-dasharray', '3,3');
+        poloD.append('text').attr('y', -14).attr('text-anchor', 'middle')
+            .attr('fill', COR.tinta).attr('font-size', '14px').attr('font-weight', '800')
+            .text('Matemática');
+        poloD.append('text').attr('y', 8).attr('text-anchor', 'middle')
+            .attr('fill', COR.marca).attr('font-size', '12px').attr('font-weight', '700')
+            .text('Pensamento Comp.');
+        poloD.append('text').attr('y', 26).attr('text-anchor', 'middle')
+            .attr('fill', COR.suave).attr('font-size', '10px').attr('font-weight', '600')
+            .text('Algoritmos e Lógica');
+
+        var tagsDir = [
+            { txt: 'Padrões & Dados', dy: -108 },
+            { txt: 'Fluxogramas', dy: 108 }
+        ];
+        tagsDir.forEach(function (tag) {
+            var g = poloD.append('g').attr('transform', 'translate(0,' + tag.dy + ')');
+            g.append('rect').attr('x', -55).attr('y', -12).attr('width', 110).attr('height', 24).attr('rx', 12)
+                .attr('fill', 'rgba(255, 255, 255, 0.06)').attr('stroke', COR.borda);
+            g.append('text').attr('text-anchor', 'middle').attr('y', 4)
+                .attr('fill', COR.suave).attr('font-size', '10px').text(tag.txt);
+        });
+
+        // Centro: Nexus Integrador
+        var nexus = raiz.append('g').attr('transform', 'translate(' + xCen + ',' + yCen + ')');
+        var nexusPulse = nexus.append('circle').attr('r', 65)
+            .attr('fill', 'none').attr('stroke', COR.acento).attr('stroke-width', 2).attr('opacity', 0);
+        var nexusW = 270, nexusH = 86;
+        nexus.append('rect').attr('x', -nexusW / 2).attr('y', -nexusH / 2).attr('width', nexusW).attr('height', nexusH)
+            .attr('rx', 16).attr('fill', 'rgba(20, 20, 28, 0.95)')
+            .attr('stroke', COR.marca).attr('stroke-width', 2);
+        nexus.append('text').attr('y', -16).attr('text-anchor', 'middle')
+            .attr('fill', COR.acento).attr('font-size', '12px').attr('font-weight', '800')
+            .attr('letter-spacing', '0.05em')
+            .text('CONTEXTO REAL & PROJETOS');
+        nexus.append('text').attr('y', 6).attr('text-anchor', 'middle')
+            .attr('fill', COR.tinta).attr('font-size', '11.5px').attr('font-weight', '600')
+            .text('Ciências · História · Geografia · Arte');
+        nexus.append('text').attr('y', 24).attr('text-anchor', 'middle')
+            .attr('fill', COR.suave).attr('font-size', '10px')
+            .text('Além do uso puramente instrumental');
+
+        var particulasC = [];
+        for (var i = 0; i < 18; i++) {
+            particulasC.push({
+                el: raiz.append('circle').attr('r', 3.5).attr('fill', i % 2 === 0 ? COR.marca : COR.acento),
+                lado: i % 2 === 0 ? 'esq' : 'dir',
+                offset: (i * 0.11) % 1
+            });
+        }
+
+        reger(svgId, function (ms) {
+            var t = (ms % 3000) / 3000;
+            nexusPulse.attr('r', 55 + t * 45).attr('opacity', (1 - t) * 0.6);
+
+            var curvoE = 'M ' + (xEsq + 78) + ' ' + yPolo +
+                ' Q ' + (xEsq + (xCen - xEsq) * 0.5) + ' ' + (yPolo - 22 * Math.sin(ms * 0.002)) + ' ' +
+                (xCen - 135) + ' ' + yCen;
+            var curvoD = 'M ' + (xDir - 78) + ' ' + yPolo +
+                ' Q ' + (xDir - (xDir - xCen) * 0.5) + ' ' + (yPolo + 22 * Math.sin(ms * 0.002)) + ' ' +
+                (xCen + 135) + ' ' + yCen;
+            pathEsq.attr('d', curvoE);
+            pathDir.attr('d', curvoD);
+
+            particulasC.forEach(function (pt) {
+                var prog = ((ms * 0.0004) + pt.offset) % 1;
+                var x, y;
+                if (pt.lado === 'esq') {
+                    x = (xEsq + 78) + ((xCen - 135) - (xEsq + 78)) * prog;
+                    y = yPolo - 22 * Math.sin(ms * 0.002) * 4 * prog * (1 - prog);
+                } else {
+                    x = (xDir - 78) - ((xDir - 78) - (xCen + 135)) * prog;
+                    y = yPolo + 22 * Math.sin(ms * 0.002) * 4 * prog * (1 - prog);
+                }
+                pt.el.attr('cx', x).attr('cy', y)
+                    .attr('opacity', Math.sin(prog * Math.PI));
+            });
+        });
+    }
+
+    ﻿    /* -------------------------------------------------------------
+       SLIDE 4: AMBIENTES E PLATAFORMAS SAS
+       Focos: Formação continuada de professores com BNCC Computação
+       Eureka!: Ambiente gamificado com exercícios adaptativos
+       Avaliações e Relatórios: Diagnóstico e acompanhamento
+       ------------------------------------------------------------- */
+    function animAmbientes(svgId) {
+        var p = palco(svgId); if (!p) return;
+        var svg = p.svg, F = p.F;
+        var yCentro = F.vy(0.50);
+
+        var cards = [
+            {
+                id: 'focos',
+                x: F.W * 0.19,
+                badge: 'FORMAÇÃO DOCENTE',
+                nome: 'Focos',
+                funcao: 'Formação continuada',
+                cor: COR.marca
+            },
+            {
+                id: 'eureka',
+                x: F.W * 0.50,
+                badge: 'PRÁTICA & GAMIFICAÇÃO',
+                nome: 'Eureka!',
+                funcao: 'Exercícios adaptativos',
+                cor: COR.acento
+            },
+            {
+                id: 'avaliacoes',
+                x: F.W * 0.81,
+                badge: 'DIAGNÓSTICO & DADOS',
+                nome: 'Avaliações e Relatórios',
+                funcao: 'Acompanhamento',
+                cor: COR.marca
+            }
+        ];
+
+        var raiz = svg.append('g');
+
+        var defs = svg.append('defs');
+        var gradCircuito = defs.append('linearGradient').attr('id', svgId + '-circuito');
+        gradCircuito.append('stop').attr('offset', '0%').attr('stop-color', COR.marca).attr('stop-opacity', 0.8);
+        gradCircuito.append('stop').attr('offset', '50%').attr('stop-color', COR.acento).attr('stop-opacity', 0.9);
+        gradCircuito.append('stop').attr('offset', '100%').attr('stop-color', COR.marca).attr('stop-opacity', 0.8);
+
+        var caboCentral = raiz.append('path').attr('fill', 'none')
+            .attr('stroke', 'url(#' + svgId + '-circuito)')
+            .attr('stroke-width', 2.5).attr('stroke-dasharray', '6,4');
+
+        var cardW = 252, cardH = 224;
+
+        var cardsEls = cards.map(function (c) {
+            var g = raiz.append('g').attr('transform', 'translate(' + c.x + ',' + yCentro + ')');
+
+            var bg = g.append('rect')
+                .attr('x', -cardW / 2).attr('y', -cardH / 2)
+                .attr('width', cardW).attr('height', cardH)
+                .attr('rx', 16)
+                .attr('fill', 'rgba(18, 18, 24, 0.92)')
+                .attr('stroke', c.cor)
+                .attr('stroke-width', 1.8);
+
+            g.append('rect')
+                .attr('x', -cardW / 2 + 16).attr('y', -cardH / 2 + 1)
+                .attr('width', cardW - 32).attr('height', 2)
+                .attr('fill', c.cor)
+                .attr('opacity', 0.85);
+
+            var badgeG = g.append('g').attr('transform', 'translate(0,' + (-cardH / 2 + 24) + ')');
+            badgeG.append('rect')
+                .attr('x', -75).attr('y', -10).attr('width', 150).attr('height', 20).attr('rx', 10)
+                .attr('fill', 'rgba(255, 255, 255, 0.06)').attr('stroke', COR.borda);
+            badgeG.append('text')
+                .attr('text-anchor', 'middle').attr('y', 4)
+                .attr('fill', c.cor).attr('font-size', '9.5px').attr('font-weight', '700')
+                .attr('letter-spacing', '0.08em')
+                .text(c.badge);
+
+            g.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('y', -cardH / 2 + 64)
+                .attr('fill', COR.tinta)
+                .attr('font-size', c.nome.length > 15 ? '16px' : '22px')
+                .attr('font-weight', '800')
+                .text(c.nome);
+
+            g.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('y', -cardH / 2 + 88)
+                .attr('fill', COR.acento)
+                .attr('font-size', '12px')
+                .attr('font-weight', '700')
+                .text(c.funcao);
+
+            g.append('line')
+                .attr('x1', -cardW / 2 + 24).attr('y1', -cardH / 2 + 104)
+                .attr('x2', cardW / 2 - 24).attr('y2', -cardH / 2 + 104)
+                .attr('stroke', 'rgba(255, 255, 255, 0.08)').attr('stroke-width', 1);
+
+            var descLinhas = [];
+            if (c.id === 'focos') {
+                descLinhas = ['Formação continuada com foco nas', 'habilidades da BNCC Computação'];
+            } else if (c.id === 'eureka') {
+                descLinhas = ['Exercícios adaptativos gamificados', 'para o uso pedagógico da tecnologia'];
+            } else {
+                descLinhas = ['Diagnóstico pedagógico contínuo e', 'evidências reais de aprendizagem'];
+            }
+
+            g.append('text').attr('text-anchor', 'middle').attr('y', -cardH / 2 + 128)
+                .attr('fill', COR.suave).attr('font-size', '11px')
+                .text(descLinhas[0]);
+            g.append('text').attr('text-anchor', 'middle').attr('y', -cardH / 2 + 146)
+                .attr('fill', COR.tinta).attr('font-size', '11px').attr('font-weight', '600')
+                .text(descLinhas[1]);
+
+            var animG = g.append('g').attr('transform', 'translate(0,' + (cardH / 2 - 34) + ')');
+            var animPecas = {};
+
+            if (c.id === 'focos') {
+                animPecas.anel1 = animG.append('circle').attr('r', 10).attr('fill', 'none').attr('stroke', COR.marca).attr('stroke-width', 1.8);
+                animPecas.anel2 = animG.append('circle').attr('r', 18).attr('fill', 'none').attr('stroke', COR.acento).attr('stroke-width', 1.2).attr('stroke-dasharray', '3,3');
+                animPecas.core = animG.append('circle').attr('r', 5).attr('fill', COR.marca);
+            } else if (c.id === 'eureka') {
+                animPecas.engrenagem = animG.append('g');
+                for (var d = 0; d < 6; d++) {
+                    animPecas.engrenagem.append('circle')
+                        .attr('cx', Math.cos(d * Math.PI / 3) * 14)
+                        .attr('cy', Math.sin(d * Math.PI / 3) * 14)
+                        .attr('r', 2.5).attr('fill', COR.acento);
+                }
+                animPecas.engrenagem.append('circle').attr('r', 9).attr('fill', 'none').attr('stroke', COR.acento).attr('stroke-width', 1.8);
+                animPecas.core = animG.append('circle').attr('r', 4.5).attr('fill', COR.marca);
+            } else {
+                animPecas.barras = [-18, -6, 6, 18].map(function (bx, bi) {
+                    return animG.append('rect')
+                        .attr('x', bx - 3.5).attr('y', 0).attr('width', 7).attr('height', 14)
+                        .attr('rx', 3.5).attr('fill', bi % 2 === 0 ? COR.marca : COR.acento);
+                });
+            }
+
+            return { g: g, bg: bg, card: c, animPecas: animPecas };
+        });
+
+        var particulas = [];
+        for (var i = 0; i < 16; i++) {
+            particulas.push({
+                el: raiz.append('circle').attr('r', 3.5).attr('fill', i % 2 === 0 ? COR.marca : COR.acento),
+                offset: (i * 0.0625) % 1
+            });
+        }
+
+        var CICLO = 9000;
+        reger(svgId, function (ms) {
+            var ondaCabo = 'M ' + (cards[0].x + cardW / 2) + ' ' + yCentro +
+                ' Q ' + ((cards[0].x + cards[1].x) / 2) + ' ' + (yCentro + 26 * Math.sin(ms * 0.002)) + ' ' +
+                (cards[1].x - cardW / 2) + ' ' + yCentro +
+                ' M ' + (cards[1].x + cardW / 2) + ' ' + yCentro +
+                ' Q ' + ((cards[1].x + cards[2].x) / 2) + ' ' + (yCentro - 26 * Math.sin(ms * 0.002)) + ' ' +
+                (cards[2].x - cardW / 2) + ' ' + yCentro;
+            caboCentral.attr('d', ondaCabo);
+
+            var tFocos = (ms % 2500) / 2500;
+            cardsEls[0].animPecas.anel1.attr('r', 8 + tFocos * 14).attr('opacity', 1 - tFocos);
+            cardsEls[0].animPecas.anel2.attr('transform', 'rotate(' + (ms * 0.06) + ')');
+
+            cardsEls[1].animPecas.engrenagem.attr('transform', 'rotate(' + (ms * 0.08) + ')');
+
+            cardsEls[2].animPecas.barras.forEach(function (bar, bi) {
+                var h = 10 + Math.sin(ms * 0.005 + bi * 1.2) * 12;
+                bar.attr('y', -h).attr('height', h);
+            });
+
+            particulas.forEach(function (pt) {
+                var prog = ((ms * 0.00035) + pt.offset) % 1;
+                var x, y;
+                if (prog < 0.5) {
+                    var u = prog / 0.5;
+                    x = (cards[0].x + cardW / 2) + ((cards[1].x - cardW / 2) - (cards[0].x + cardW / 2)) * u;
+                    y = yCentro + 26 * Math.sin(ms * 0.002) * 4 * u * (1 - u);
+                } else {
+                    var u = (prog - 0.5) / 0.5;
+                    x = (cards[1].x + cardW / 2) + ((cards[2].x - cardW / 2) - (cards[1].x + cardW / 2)) * u;
+                    y = yCentro - 26 * Math.sin(ms * 0.002) * 4 * u * (1 - u);
+                }
+                pt.el.attr('cx', x).attr('cy', y)
+                    .attr('opacity', Math.sin(prog * Math.PI));
+            });
+        });
+    }
+/* -------------------------------------------------------------
+       SLIDE 5: TRÊS CAMADAS PEDAGÓGICAS
+       ------------------------------------------------------------- */
+    function animTresCamadas(svgId) {
+        var p = palco(svgId); if (!p) return;
+        var svg = p.svg, F = p.F;
+        var cx = F.W * 0.28, cy = F.vy(0.52);
+
+        var raiz = svg.append('g');
+
+        // Três camadas concêntricas
+        var c1 = raiz.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 195)
+            .attr('fill', 'none').attr('stroke', 'rgba(255, 255, 255, 0.12)')
+            .attr('stroke-width', 2).attr('stroke-dasharray', '4,6');
+        var c2 = raiz.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 140)
+            .attr('fill', 'none').attr('stroke', 'rgba(255, 199, 102, 0.45)')
+            .attr('stroke-width', 2.5).attr('stroke-dasharray', '8,4');
+
+        var glowC3 = raiz.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 92)
+            .attr('fill', 'rgba(255, 144, 77, 0.10)');
+        var c3 = raiz.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 86)
+            .attr('fill', 'rgba(20, 20, 26, 0.95)')
+            .attr('stroke', COR.marca).attr('stroke-width', 3);
+        var c3Inner = raiz.append('circle').attr('cx', cx).attr('cy', cy).attr('r', 79)
+            .attr('fill', 'none')
+            .attr('stroke', 'rgba(255, 255, 255, 0.08)').attr('stroke-width', 1.5).attr('stroke-dasharray', '3,3');
+
+        raiz.append('text').attr('x', cx).attr('y', cy - 8)
+            .attr('text-anchor', 'middle').attr('fill', COR.tinta)
+            .attr('font-size', '14px').attr('font-weight', '800')
+            .text('BNCC Computação');
+        raiz.append('text').attr('x', cx).attr('y', cy + 14)
+            .attr('text-anchor', 'middle').attr('fill', COR.acento)
+            .attr('font-size', '11px').attr('font-weight', '700')
+            .attr('letter-spacing', '0.08em')
+            .text('INTENCIONAL');
+
+        // Linha de radar rotativo
+        var radar = raiz.append('line')
+            .attr('x1', cx).attr('y1', cy)
+            .attr('stroke', COR.marca).attr('stroke-width', 2.5)
+            .attr('opacity', 0.85);
+
+        // Painéis explicativos à direita
+        var xCards = F.W * 0.53;
+        var cardsInfo = [
+            {
+                num: '1',
+                titulo: 'Uso Instrumental (Recurso)',
+                desc: 'Utilização de ferramentas e softwares digitais. Necessário, porém insuficiente para desenvolver as competências computacionais.',
+                y: F.vy(0.22),
+                cor: COR.suave
+            },
+            {
+                num: '2',
+                titulo: 'Abordagem Transversal (Temas)',
+                desc: 'Reflexões sobre tecnologia e sociedade em debates e leituras. Traz contexto, mas não assegura progressão de código e lógica.',
+                y: F.vy(0.50),
+                cor: COR.acento
+            },
+            {
+                num: '3',
+                titulo: 'Desenvolvimento Intencional (BNCC)',
+                desc: 'Objetivos claros, habilidades mapeadas e evidências de aprendizagem verificáveis no Pensamento Computacional e Mundo Digital.',
+                y: F.vy(0.78),
+                cor: COR.marca,
+                destaque: true
+            }
+        ];
+
+        var cardsEls = cardsInfo.map(function (c) {
+            var g = raiz.append('g').attr('transform', 'translate(' + xCards + ',' + c.y + ')');
+            var bg = g.append('rect')
+                .attr('x', 0).attr('y', -31).attr('width', 390).attr('height', 62).attr('rx', 12)
+                .attr('fill', c.destaque ? 'rgba(255, 144, 77, 0.12)' : 'rgba(18, 18, 24, 0.85)')
+                .attr('stroke', c.destaque ? COR.marca : COR.borda)
+                .attr('stroke-width', c.destaque ? 2 : 1.2);
+            var circleNum = g.append('circle').attr('cx', 24).attr('cy', 0).attr('r', 14)
+                .attr('fill', c.destaque ? COR.marca : 'rgba(255,255,255,0.08)');
+            g.append('text').attr('x', 24).attr('y', 5).attr('text-anchor', 'middle')
+                .attr('fill', c.destaque ? COR.fundo : COR.tinta).attr('font-size', '12px').attr('font-weight', '800')
+                .text(c.num);
+            g.append('text').attr('x', 50).attr('y', -8)
+                .attr('fill', c.cor).attr('font-size', '12.5px').attr('font-weight', '700')
+                .text(c.titulo);
+            g.append('text').attr('x', 50).attr('y', 11)
+                .attr('fill', COR.suave).attr('font-size', '10px')
+                .text(c.desc.substring(0, 58) + '...');
+            return { g: g, bg: bg, info: c };
+        });
+
+        // Linhas conectoras entre camadas e cards
+        var linkLines = [
+            raiz.append('line').attr('stroke', COR.borda).attr('stroke-width', 1.5).attr('stroke-dasharray', '2,4'),
+            raiz.append('line').attr('stroke', COR.borda).attr('stroke-width', 1.5).attr('stroke-dasharray', '2,4'),
+            raiz.append('line').attr('stroke', COR.marca).attr('stroke-width', 2).attr('stroke-dasharray', '2,4')
+        ];
+
+        var CICLO = 8000;
+        reger(svgId, function (ms) {
+            var t = (ms % CICLO) / CICLO;
+            var angulo = t * Math.PI * 2;
+            var rx = cx + Math.cos(angulo) * 195;
+            var ry = cy + Math.sin(angulo) * 195;
+            radar.attr('x2', rx).attr('y2', ry);
+
+            var p3 = Math.sin(ms * 0.004) * 4;
+            c3.attr('r', 86 + p3);
+            glowC3.attr('r', 92 + p3);
+
+            linkLines[0].attr('x1', cx + 195).attr('y1', cy).attr('x2', xCards).attr('y2', cardsInfo[0].y);
+            linkLines[1].attr('x1', cx + 140).attr('y1', cy).attr('x2', xCards).attr('y2', cardsInfo[1].y);
+            linkLines[2].attr('x1', cx + (86 + p3)).attr('y1', cy).attr('x2', xCards).attr('y2', cardsInfo[2].y);
+        });
+    }
+
+    /* -------------------------------------------------------------
+       SLIDE 5: CHC COMO ESPINHA DORSAL
+       ------------------------------------------------------------- */
+    function animArticulacaoCHC(svgId) {
+        var p = palco(svgId); if (!p) return;
+        var svg = p.svg, F = p.F;
+        var yTopo = F.vy(0.20);
+        var yPilar = F.vy(0.55);
+        var yBase = F.vy(0.85);
+
+        var raiz = svg.append('g');
+
+        var chcBar = raiz.append('g').attr('transform', 'translate(' + (F.W / 2) + ',' + yTopo + ')');
+        chcBar.append('rect')
+            .attr('x', -300).attr('y', -24).attr('width', 600).attr('height', 48).attr('rx', 14)
+            .attr('fill', 'rgba(255, 144, 77, 0.15)')
+            .attr('stroke', COR.marca).attr('stroke-width', 2.5);
+        chcBar.append('text').attr('y', -3).attr('text-anchor', 'middle')
+            .attr('fill', COR.tinta).attr('font-size', '13px').attr('font-weight', '800')
+            .text('COMPONENTE CHC: COMPUTAÇÃO, HUMANIDADES E CRIATIVIDADE');
+        chcBar.append('text').attr('y', 14).attr('text-anchor', 'middle')
+            .attr('fill', COR.acento).attr('font-size', '10px').attr('font-weight', '600')
+            .text('Estrutura curricular que garante progressão, continuidade e intencionalidade');
+
+        var pilares = [
+            { x: F.W * 0.22, titulo: 'Pensamento Comp.', sub: 'Algoritmos e Lógica', cod: 'Decomposição e Padrões' },
+            { x: F.W * 0.50, titulo: 'Mundo Digital', sub: 'Redes e Dispositivos', cod: 'Hardware e Segurança' },
+            { x: F.W * 0.78, titulo: 'Cultura Digital', sub: 'Uso Ético e Mídias', cod: 'Cidadania e Impactos' }
+        ];
+
+        var pilaresEls = pilares.map(function (col) {
+            var g = raiz.append('g').attr('transform', 'translate(' + col.x + ',' + yPilar + ')');
+
+            g.append('rect').attr('x', -70).attr('y', -55).attr('width', 140).attr('height', 110)
+                .attr('rx', 12).attr('fill', 'rgba(16, 16, 22, 0.90)')
+                .attr('stroke', COR.borda).attr('stroke-width', 1.5);
+            g.append('text').attr('y', -24).attr('text-anchor', 'middle')
+                .attr('fill', COR.acento).attr('font-size', '12px').attr('font-weight', '700')
+                .text(col.titulo);
+            g.append('text').attr('y', -2).attr('text-anchor', 'middle')
+                .attr('fill', COR.tinta).attr('font-size', '11px').attr('font-weight', '600')
+                .text(col.sub);
+            g.append('text').attr('y', 20).attr('text-anchor', 'middle')
+                .attr('fill', COR.suave).attr('font-size', '9px')
+                .text(col.cod);
+
+            raiz.append('line')
+                .attr('x1', col.x).attr('y1', yTopo + 24)
+                .attr('x2', col.x).attr('y2', yPilar - 55)
+                .attr('stroke', COR.marca).attr('stroke-width', 2);
+
+            raiz.append('line')
+                .attr('x1', col.x).attr('y1', yPilar + 55)
+                .attr('x2', col.x).attr('y2', yBase - 22)
+                .attr('stroke', COR.acento).attr('stroke-width', 2);
+
+            return { g: g, col: col };
+        });
+
+        var baseBar = raiz.append('g').attr('transform', 'translate(' + (F.W / 2) + ',' + yBase + ')');
+        baseBar.append('rect')
+            .attr('x', -300).attr('y', -22).attr('width', 600).attr('height', 44).attr('rx', 12)
+            .attr('fill', 'rgba(255, 255, 255, 0.05)')
+            .attr('stroke', COR.borda).attr('stroke-width', 1.5);
+        baseBar.append('text').attr('y', -2).attr('text-anchor', 'middle')
+            .attr('fill', COR.tinta).attr('font-size', '12px').attr('font-weight', '700')
+            .text('APLICAÇÕES E PROJETOS REAIS NAS DISCIPLINAS DO SAS');
+        baseBar.append('text').attr('y', 14).attr('text-anchor', 'middle')
+            .attr('fill', COR.suave).attr('font-size', '10px')
+            .text('Língua Portuguesa · Matemática · Ciências · História · Geografia · Arte');
+
+        var pulsos = [];
+        for (var i = 0; i < 9; i++) {
+            pulsos.push({
+                el: raiz.append('circle').attr('r', 4).attr('fill', COR.marca),
+                pilarIdx: i % 3,
+                prog: (i * 0.33) % 1
+            });
+        }
+
+        reger(svgId, function (ms) {
+            pulsos.forEach(function (p, idx) {
+                var prog = ((ms * 0.0005) + idx * 0.11) % 1;
+                var pilar = pilares[p.pilarIdx];
+                var yTotal = (yBase - 22) - (yTopo + 24);
+                var y = (yTopo + 24) + yTotal * prog;
+                p.el.attr('cx', pilar.x).attr('cy', y)
+                    .attr('opacity', Math.sin(prog * Math.PI));
+            });
+        });
+    }
+
+    /* -------------------------------------------------------------
+       SLIDE 6: CINCO ETAPAS PARA O ALINHAMENTO
+       ------------------------------------------------------------- */
+    function animCincoEtapas(svgId) {
+        var p = palco(svgId); if (!p) return;
+        var svg = p.svg, F = p.F;
+        var yNivel = F.vy(0.50);
+
+        var etapas = [
+            { num: '1', titulo: 'Mapear SAS', desc: 'Identificar propostas existentes nos livros e guias' },
+            { num: '2', titulo: 'Cruzar BNCC', desc: 'Correspondência com as habilidades específicas' },
+            { num: '3', titulo: 'Diagnosticar', desc: 'Mapear lacunas e demandas de intervenção' },
+            { num: '4', titulo: 'Progressão', desc: 'Organizar a trilha curricular do 6º ao 8º ano' },
+            { num: '5', titulo: 'Projetos', desc: 'Definir projetos integradores sem sobreposição' }
+        ];
+
+        var xs = [F.W * 0.12, F.W * 0.31, F.W * 0.50, F.W * 0.69, F.W * 0.88];
+        var raiz = svg.append('g');
+
+        raiz.append('line')
+            .attr('x1', xs[0]).attr('y1', yNivel)
+            .attr('x2', xs[4]).attr('y2', yNivel)
+            .attr('stroke', COR.borda).attr('stroke-width', 3);
+
+        var linhaAtiva = raiz.append('line')
+            .attr('x1', xs[0]).attr('y1', yNivel)
+            .attr('x2', xs[0]).attr('y2', yNivel)
+            .attr('stroke', COR.marca).attr('stroke-width', 3);
+
+        var estacoesEls = etapas.map(function (et, idx) {
+            var x = xs[idx];
+            var g = raiz.append('g').attr('transform', 'translate(' + x + ',' + yNivel + ')');
+
+            var halo = g.append('circle').attr('r', 28)
+                .attr('fill', 'none').attr('stroke', COR.marca).attr('stroke-width', 2).attr('opacity', 0);
+
+            var circulo = g.append('circle').attr('r', 22)
+                .attr('fill', 'rgba(18, 18, 24, 0.95)')
+                .attr('stroke', COR.borda).attr('stroke-width', 2);
+
+            var textoNum = g.append('text').attr('y', 5).attr('text-anchor', 'middle')
+                .attr('fill', COR.tinta).attr('font-size', '14px').attr('font-weight', '800')
+                .text(et.num);
+
+            var dyCard = (idx % 2 === 0) ? -75 : 75;
+            var card = g.append('g').attr('transform', 'translate(0,' + dyCard + ')');
+
+            g.append('line').attr('x1', 0).attr('y1', idx % 2 === 0 ? -22 : 22)
+                .attr('x2', 0).attr('y2', idx % 2 === 0 ? -48 : 48)
+                .attr('stroke', COR.borda).attr('stroke-width', 1.5).attr('stroke-dasharray', '2,2');
+
+            card.append('rect').attr('x', -70).attr('y', -24).attr('width', 140).attr('height', 48)
+                .attr('rx', 10).attr('fill', 'rgba(16, 16, 22, 0.90)')
+                .attr('stroke', COR.borda).attr('stroke-width', 1.2);
+            card.append('text').attr('y', -5).attr('text-anchor', 'middle')
+                .attr('fill', COR.acento).attr('font-size', '12px').attr('font-weight', '700')
+                .text(et.titulo);
+            card.append('text').attr('y', 13).attr('text-anchor', 'middle')
+                .attr('fill', COR.suave).attr('font-size', '9px')
+                .text(et.desc.substring(0, 24) + '...');
+
+            return { g: g, circulo: circulo, halo: halo, textoNum: textoNum, x: x };
+        });
+
+        var CICLO = 7500;
+        reger(svgId, function (ms) {
+            var t = (ms % CICLO) / CICLO;
+            var xAtual = xs[0] + (xs[4] - xs[0]) * t;
+            linhaAtiva.attr('x2', xAtual);
+
+            estacoesEls.forEach(function (est, idx) {
+                var dist = Math.abs(xAtual - est.x);
+                var ativa = dist < 35;
+                if (ativa) {
+                    est.circulo.attr('stroke', COR.marca).attr('fill', 'rgba(255, 144, 77, 0.35)');
+                    est.halo.attr('opacity', 0.8).attr('r', 24 + (1 - dist / 35) * 14);
+                    est.textoNum.attr('fill', COR.tinta);
+                } else if (xAtual > est.x) {
+                    est.circulo.attr('stroke', COR.acento).attr('fill', 'rgba(18, 18, 24, 0.95)');
+                    est.halo.attr('opacity', 0);
+                    est.textoNum.attr('fill', COR.acento);
+                } else {
+                    est.circulo.attr('stroke', COR.borda).attr('fill', 'rgba(18, 18, 24, 0.95)');
+                    est.halo.attr('opacity', 0);
+                    est.textoNum.attr('fill', COR.suave);
+                }
+            });
+        });
+    }
+
+
+    /* -------------------------------------------------------------
+       SLIDE 8: FECHAMENTO E MATRIZ DE ARTICULAÇÃO
+       Matriz sutil em background com nós em pulso contínuo e
+       feixes luminosos conectando a rede pedagógica.
+       ------------------------------------------------------------- */
+    function animFechamento(svgId) {
+        var p = palco(svgId); if (!p) return;
+        var svg = p.svg, F = p.F;
+        var raiz = svg.append('g');
+
+        var nos = [];
+        var colunas = 7, linhas = 4;
+        for (var c = 0; c < colunas; c++) {
+            for (var l = 0; l < linhas; l++) {
+                nos.push({
+                    x: F.W * (0.08 + 0.84 * (c / (colunas - 1))),
+                    y: F.vy(0.10 + 0.80 * (l / (linhas - 1))),
+                    c: c,
+                    l: l
+                });
+            }
+        }
+
+        var linhasG = raiz.append('g');
+        nos.forEach(function (n1, i) {
+            nos.forEach(function (n2, j) {
+                if (j > i) {
+                    var dc = Math.abs(n1.c - n2.c);
+                    var dl = Math.abs(n1.l - n2.l);
+                    if ((dc === 1 && dl === 0) || (dc === 0 && dl === 1)) {
+                        linhasG.append('line')
+                            .attr('x1', n1.x).attr('y1', n1.y)
+                            .attr('x2', n2.x).attr('y2', n2.y)
+                            .attr('stroke', 'rgba(255, 255, 255, 0.07)')
+                            .attr('stroke-width', 1);
+                    }
+                }
+            });
+        });
+
+        var nosEls = nos.map(function (n) {
+            return raiz.append('circle')
+                .attr('cx', n.x).attr('cy', n.y).attr('r', 3)
+                .attr('fill', (n.c + n.l) % 2 === 0 ? COR.marca : COR.acento)
+                .attr('opacity', 0.35);
+        });
+
+        var pulsos = [];
+        for (var k = 0; k < 12; k++) {
+            pulsos.push({
+                el: raiz.append('circle').attr('r', 4).attr('fill', k % 2 === 0 ? COR.marca : COR.acento),
+                offset: (k * 0.08) % 1
+            });
+        }
+
+        var CICLO = 8000;
+        reger(svgId, function (ms) {
+            nosEls.forEach(function (el, idx) {
+                var pulse = Math.sin(ms * 0.003 + idx * 0.5) * 0.25 + 0.35;
+                el.attr('opacity', pulse).attr('r', 2.5 + pulse * 1.8);
+            });
+
+            pulsos.forEach(function (p, idx) {
+                var prog = ((ms * 0.0003) + p.offset) % 1;
+                var n1 = nos[(idx * 2) % nos.length];
+                var n2 = nos[(idx * 2 + 3) % nos.length];
+                var px = n1.x + (n2.x - n1.x) * prog;
+                var py = n1.y + (n2.y - n1.y) * prog;
+                p.el.attr('cx', px).attr('cy', py)
+                    .attr('opacity', Math.sin(prog * Math.PI) * 0.65);
+            });
+        });
+    }
+
+    function ligar() {
+        animPotencialSAS('stage-potencial');
+        animSinergia('stage-sinergia');
+        animAmbientes('stage-ambientes');
+        animTresCamadas('stage-camadas');
+        animArticulacaoCHC('stage-chc');
+        animCincoEtapas('stage-etapas');
+        animFechamento('stage-fechamento');
+    }
+
+
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ligar);
+    else ligar();
+})();
+</script>
+<script>
+/* ==============================================================
+   Navegação slide a slide: teclado, botões de seta e toque (mobile).
+
+   As guardas importam: durante a EDIÇÃO (tecla E) e a PINTURA
+   (tecla P) o teclado/toque pertence a esses modos. Sem isso, arrastar
+   um elemento com a seta trocaria de slide no meio da edição.
+   ============================================================== */
+(function () {
+    'use strict';
+    var secs = Array.prototype.slice.call(document.querySelectorAll('body > section'));
+    var btnPrev = document.getElementById('nav-btn-prev');
+    var btnNext = document.getElementById('nav-btn-next');
+
+    function atual() {
+        var meio = window.innerHeight / 2, achado = 0;
+        secs.forEach(function (s, i) {
+            var r = s.getBoundingClientRect();
+            if (r.top <= meio && r.bottom > meio) achado = i;
+        });
+        return achado;
+    }
+
+    function atualizarBotoes(i) {
+        if (typeof i !== 'number') i = atual();
+        if (btnPrev) {
+            if (i <= 0) btnPrev.classList.add('disabled');
+            else btnPrev.classList.remove('disabled');
+        }
+        if (btnNext) {
+            if (i >= secs.length - 1) btnNext.classList.add('disabled');
+            else btnNext.classList.remove('disabled');
+        }
+    }
+
+    function ir(d) {
+        var de = atual(), i = Math.max(0, Math.min(secs.length - 1, de + d));
+        if (i === de) return;
+        secs[i].scrollIntoView({ behavior: 'smooth', block: 'start' });
+        atualizarBotoes(i);
+    }
+
+    // Teclado (Desktop)
+    document.addEventListener('keydown', function (e) {
+        if (document.body.classList.contains('me-on') || document.body.classList.contains('md-on')) return;
+        var t = e.target;
+        if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ''))) return;
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        if (['ArrowDown', 'ArrowRight', 'PageDown', ' ', 'Spacebar'].indexOf(e.key) !== -1) { e.preventDefault(); ir(1); }
+        else if (['ArrowUp', 'ArrowLeft', 'PageUp'].indexOf(e.key) !== -1) { e.preventDefault(); ir(-1); }
+    });
+
+    // Cliques nos botões de seta da interface
+    if (btnPrev) {
+        btnPrev.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            ir(-1);
+        });
+    }
+    if (btnNext) {
+        btnNext.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            ir(1);
+        });
+    }
+
+    // Toque na tela (Mobile: toque para mudar o slide e suporte a deslize horizontal)
+    var touchStartX = 0, touchStartY = 0, touchStartTime = 0;
+    window.addEventListener('touchstart', function (e) {
+        if (e.touches && e.touches.length === 1) {
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+            touchStartTime = Date.now();
+        }
+    }, { passive: true });
+
+    window.addEventListener('touchend', function (e) {
+        if (document.body.classList.contains('me-on') || document.body.classList.contains('md-on')) return;
+        var t = e.target;
+        // Não intercepta se o toque foi num botão, link, no próprio menu ou num controle interativo
+        if (t && (t.closest('#mira-nav') || t.closest('button') || t.closest('a') || t.closest('.replay-btn') || t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ''))) return;
+
+        if (!e.changedTouches || e.changedTouches.length === 0) return;
+        var endX = e.changedTouches[0].clientX;
+        var endY = e.changedTouches[0].clientY;
+        var dx = endX - touchStartX;
+        var dy = endY - touchStartY;
+        var dist = Math.sqrt(dx * dx + dy * dy);
+        var dur = Date.now() - touchStartTime;
+
+        // Gesto de deslize (swipe) horizontal
+        if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.5 && dur < 600) {
+            if (dx < 0) ir(1);
+            else ir(-1);
+            return;
+        }
+
+        // Toque na tela (tap): duração curta e sem arrastar ("no celular é só tocar na tela para mudar o slide")
+        if (dist < 18 && dur < 400) {
+            // Toque na faixa esquerda (20% da tela) volta; toque no restante avança
+            if (touchStartX < window.innerWidth * 0.20) {
+                ir(-1);
+            } else {
+                ir(1);
+            }
+        }
+    }, { passive: true });
+
+    /* ---------- desenho (tecla P) pertence AO SLIDE ----------
+       O mira-draw pinta num <canvas> único, fixo sobre a janela: sem
+       isto, o traço feito num slide fica pairando sobre todos os outros,
+       como se você tivesse riscado a tela e não o slide.
+
+       Aqui os traços são guardados por slide e trocados junto com ele:
+       sai do slide, o desenho sai; volta, o desenho volta. Usa a API
+       pública `getShapes`/`setShapes` do mira-draw, sem tocar no módulo.
+
+       No palco do mira-remote o desenho é da shell (modelo global
+       sincronizado com o celular), então lá isto não se mete. */
+    var porSlide = {}, ultimo = -1;
+    function trocarDesenho() {
+        atualizarBotoes();
+        if (window.__MIRA_REMOTE_STAGE__) return;
+        var md = window.miraDraw;
+        if (!md || !md.getShapes || !md.setShapes) return;   // deck sem a caneta
+        var i = atual();
+        if (i === ultimo) return;
+        if (ultimo >= 0) porSlide[ultimo] = md.getShapes();  // guarda o que estava
+        ultimo = i;
+        md.setShapes(porSlide[i] || []);
+    }
+    window.addEventListener('load', function () {
+        ultimo = atual();
+        atualizarBotoes(ultimo);
+    });
+    window.addEventListener('scroll', trocarDesenho, { passive: true });
+})();
+</script>
+
+<script defer src="mira/mira-edit.js"></script>
+<script defer src="mira/mira-edit-free.js"></script>
+<script defer src="mira/mira-draw.js"></script>
+</body>
+</html>
