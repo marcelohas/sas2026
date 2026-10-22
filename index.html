@@ -93,8 +93,16 @@
     --muted: var(--mira-text-soft);
     --line: var(--mira-card-border);
     /* quadro 16:9 que cabe inteiro na janela */
-    --fmt-w: min(100vw, calc(100vh * 16 / 9));
+    --viewport-w: 100vw;
+    --viewport-h: 100vh;
+    --fmt-w: min(var(--viewport-w), calc(var(--viewport-h) * 16 / 9));
     --fmt-h: calc(var(--fmt-w) * 9 / 16);
+}
+@supports (height: 100dvh) {
+    :root {
+        --viewport-w: 100dvw;
+        --viewport-h: 100dvh;
+    }
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -120,8 +128,8 @@ body > section {
     min-height: var(--fmt-h);
     /* centraliza o quadro: em tela que não é 16:9 a sobra vira
        faixa cinza acima e abaixo, nunca o slide seguinte */
-    margin: calc((100vh - var(--fmt-h)) / 2) 0;
-    scroll-margin-top: calc((100vh - var(--fmt-h)) / 2);
+    margin: calc((var(--viewport-h) - var(--fmt-h)) / 2) 0;
+    scroll-margin-top: calc((var(--viewport-h) - var(--fmt-h)) / 2);
     overflow: hidden;
     background: var(--bg);
     scroll-snap-align: start;
@@ -277,6 +285,91 @@ p  { font-size: clamp(15px, 2vh, 20px); line-height: 1.5; color: var(--muted); }
 .nav-msg-desktop { display: inline; }
 .nav-msg-mobile { display: none; }
 
+.rotate-device {
+    display: none;
+}
+
+/* Celulares em paisagem: preserva o quadro 16:9 e reduz apenas as
+   margens tipograficas. As animacoes continuam usando o mesmo viewBox. */
+@media (orientation: landscape) and (max-height: 520px) {
+    .slide-main { padding: clamp(18px, 5vh, 28px); }
+    .slide-main h2 {
+        font-size: clamp(20px, 6.2vh, 30px);
+        margin-bottom: 8px;
+    }
+    .slide-centro {
+        gap: clamp(8px, 2.8vh, 14px);
+        padding: clamp(18px, 5vh, 30px);
+    }
+    .slide-centro h1 { font-size: clamp(30px, 10vh, 48px); }
+    .slide-centro > p { font-size: clamp(12px, 3.8vh, 17px); }
+    body > section:last-of-type .slide-centro {
+        padding: 18px 20px !important;
+        gap: 10px !important;
+    }
+    body > section:last-of-type .slide-centro > div {
+        gap: 10px !important;
+    }
+    body > section:last-of-type .slide-centro > div > div {
+        padding: 12px 13px !important;
+        border-radius: 10px !important;
+    }
+    body > section:last-of-type h3 {
+        font-size: 13px !important;
+        margin-bottom: 5px !important;
+    }
+    body > section:last-of-type .slide-centro > div p {
+        font-size: 10px !important;
+        line-height: 1.35 !important;
+    }
+}
+
+/* Em retrato, o deck pede a rotacao do aparelho em vez de comprimir
+   textos e graficos ate ficarem ilegíveis. */
+@media (orientation: portrait) and (max-width: 820px) {
+    body { overflow: hidden; }
+    body > section,
+    #mira-nav { visibility: hidden; }
+    .rotate-device {
+        position: fixed;
+        inset: 0;
+        z-index: 100000;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        padding: max(28px, env(safe-area-inset-top)) max(28px, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)) max(28px, env(safe-area-inset-left));
+        background: var(--mira-bg);
+        color: var(--mira-text);
+        text-align: center;
+    }
+    .rotate-device svg {
+        width: 64px;
+        height: 64px;
+        color: var(--mira-primary);
+        animation: rotate-hint 2.4s ease-in-out infinite;
+    }
+    .rotate-device strong { font-size: 22px; }
+    .rotate-device span {
+        max-width: 28ch;
+        color: var(--mira-text-soft);
+        font-size: 15px;
+        line-height: 1.45;
+    }
+}
+
+@keyframes rotate-hint {
+    0%, 20% { transform: rotate(0deg) scale(1); }
+    55%, 80% { transform: rotate(90deg) scale(1.06); }
+    100% { transform: rotate(90deg) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .rotate-device svg { animation: none; transform: rotate(90deg); }
+}
+
 @media (max-width: 640px), (pointer: coarse) {
     #mira-nav {
         bottom: max(4px, env(safe-area-inset-bottom));
@@ -301,6 +394,17 @@ p  { font-size: clamp(15px, 2vh, 20px); line-height: 1.5; color: var(--muted); }
 </style>
 </head>
 <body>
+
+<aside class="rotate-device" role="status" aria-live="polite">
+    <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+        <rect x="20" y="8" width="24" height="48" rx="5" stroke="currentColor" stroke-width="3"></rect>
+        <circle cx="32" cy="49" r="1.8" fill="currentColor"></circle>
+        <path d="M10 25C7 31 8 39 13 44" stroke="currentColor" stroke-width="3" stroke-linecap="round"></path>
+        <path d="M9 42L13 45L16 40" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path>
+    </svg>
+    <strong>Gire o celular</strong>
+    <span>Esta apresentação foi preparada para visualização na horizontal.</span>
+</aside>
 
 <!-- === SLIDE 1 · CAPA === -->
 <section>
